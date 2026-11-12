@@ -1,5 +1,4 @@
-{
-  "buildCommand": "",
-  "outputDirectory": ".",
-  "framework": null
-}
+const SUPABASE_URL = "https://qeessputknhkrogbtvgn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_vHZsbEcNgVKk5NfcQA8NYw_HVF7o9Vy";
+const { createClient } = supabase;
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
