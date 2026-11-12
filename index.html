@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0,user-scalable=no">
+<title>三角洲订单管理【Vercel静态可用版】</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+tailwind.config = {
+  theme:{
+    extend:{
+      colors:{
+        primary:'#165DFF',dark:'#1D2939',warn:'#FF7D00',danger:'#F53F3F',success:'#00B42A',closed:'#86909C'
+      }
+    }
+  }
+}
+</script>
+<style>
+.page{display:none}
+.page.active{display:block}
+.card-shadow{box-shadow:0 2px 12px rgba(0,0,0,0.08)}
+.warn-card{border:2px solid #F53F3F!important}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z:50;align-items:center;justify-content:center;padding:16px}
+.modal.active{display:flex}
+.modal-content{width:100%;max-width:520px;background:#fff;border-radius:12px;max-height:90vh;overflow-y:auto;padding:16px}
+</style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen">
+<div class="max-w-xl mx-auto pb-24">
+<header class="bg-primary text-white p-4 sticky top-0 z-10">
+<div class="flex justify-between items-center">
+<h1 class="text-lg font-bold">三角洲订单【实时同步】</h1>
+<div class="flex gap-2">
+<button onclick="openSalarySetting()" class="text-sm border px-2 py-0.5 rounded">⚙️薪资</button>
+<button onclick="openPeriodModal()" class="text-sm border px-2 py-0.5 rounded bg-orange-500">📅重算</button>
+</div>
+</div>
+</header>
+
+<div id="syncTip" class="bg-green-500 text-white text-center py-1 text-xs hidden">✅ 已连接实时同步</div>
+
+<!-- 周期弹窗 -->
+<div id="periodModal" class="modal">
+<div class="modal-content">
+<h3 class="text-lg font-bold mb-4">核算周期</h3>
+<div class="mb-3">
+<label class="text-sm font-medium">核算类型</label>
+<div class="flex gap-2 mt-1">
+<label class="flex-1 border rounded p-2 text-center cursor-pointer">
+<input type="radio" name="periodType" value="week" checked onchange="switchPeriodType()"> 按周
+</label>
+<label class="flex-1 border rounded p-2 text-center cursor-pointer">
+<input type="radio" name="periodType" value="month" onchange="switchPeriodType()"> 按月
+</label>
+</div>
+</div>
+<div id="weekSelectArea" class="mb-3">
+<label class="text-sm font-medium">周一起始</label>
+<input type="date" id="weekStartDate" class="w-full border rounded px-2 py-1 mt-1">
+</div>
+<div id="monthSelectArea" class="mb-3 hidden">
+<label class="text-sm font-medium">选择月份</label>
+<input type="month" id="selMonth" class="w-full border rounded px-2 py-1 mt-1">
+</div>
+<div class="text-xs text-gray-500 mb-3">按周期总业绩判定A/B薪资方案</div>
+<div class="flex gap-2 mt-4">
+<button onclick="closePeriodModal()" class="flex-1 border py-2 rounded-lg">取消</button>
+<button onclick="recalcByPeriod()" class="flex-1 bg-orange-500 text-white py-2 rounded-lg">🔄重算薪资</button>
+</div>
+</div>
+</div>
+
+<!-- 薪资配置弹窗 -->
+<div id="salaryModal" class="modal">
+<div class="modal-content">
+<h3 class="text-lg font-bold mb-4">薪资规则</h3>
+<div class="mb-3 p-3 bg-gray-50 rounded-lg">
+<label class="text-sm font-medium">✅每周达标门槛（万）</label>
+<input type="number" id="cfgWeekTarget" class="w-full border rounded px-2 py-1 mt-1" value="10000">
+</div>
+<div class="mb-3 p-3 bg-gray-50 rounded-lg">
+<label class="text-sm font-medium">✅每月达标门槛（万）</label>
+<input type="number" id="cfgMonthTarget" class="w-full border rounded px-2 py-1 mt-1" value="40000">
+</div>
+<div class="mb-3 p-3 bg-blue-50 rounded-lg">
+<div class="font-medium text-primary mb-2">方案A：达标</div>
+<div class="grid grid-cols-2 gap-2">
+<div><label class="text-xs text-gray-500">1000万基础价</label><input type="number" id="cfgBaseA" class="w-full border rounded px-2 py-1" value="29"></div>
+<div><label class="text-xs text-gray-500">每+100万加价</label><input type="number" id="cfgAddA" class="w-full border rounded px-2 py-1" value="2.9"></div>
+</div>
+</div>
+<div class="mb-3 p-3 bg-orange-50 rounded-lg">
+<div class="font-medium text-warn mb-2">方案B：未达标</div>
+<div class="grid grid-cols-2 gap-2">
+<div><label class="text-xs text-gray-500">1000万基础价</label><input type="number" id="cfgBaseB" class="w-full border rounded px-2 py-1" value="27"></div>
+<div><label class="text-xs text-gray-500">每+100万加价</label><input type="number" id="cfgAddB" class="w-full border rounded px-2 py-1" value="2.7"></div>
+</div>
+<div class="mt-3 border-t pt-3">
+<div class="font-medium text-warn mb-2">未达标单日奖励</div>
+<div class="grid grid-cols-2 gap-2">
+<div><label class="text-xs text-gray-500">单日门槛（万）</label><input type="number" id="cfgBonusThreshold" class="w-full border rounded px-2 py-1" value="2000"></div>
+<div><label class="text-xs text-gray-500">奖励金额</label><input type="number" id="cfgBonusMoney" class="w-full border rounded px-2 py-1" value="30"></div>
+</div>
+</div>
+</div>
+<div class="mb-3 p-3 bg-gray-50 rounded-lg">
+<label class="text-sm font-medium">超时小时（标记丢单）</label>
+<input type="number" id="cfgTimeoutHour" class="w-full border rounded px-2 py-1 mt-1" value="12">
+</div>
+<div class="flex gap-2 mt-4">
+<button onclick="closeSalarySetting()" class="flex-1 border py-2 rounded-lg">取消</button>
+<button onclick="saveSalarySetting()" class="flex-1 bg-primary text-white py-2 rounded-lg">保存</button>
+</div>
+</div>
+</div>
+
+<div id="warnBanner" onclick="setFilter('warn')" class="hidden bg-danger text-white p-3 rounded-lg mb-4 cursor-pointer">
+<i class="fa fa-exclamation-triangle"></i> <span id="warnBannerText"></span> <span class="text-xs opacity-80">点击查看</span>
+</div>
+<div id="smallOrderBanner" onclick="setFilter('small')" class="hidden bg-warn text-white p-3 rounded-lg mb-4 cursor-pointer">
+<i class="fa fa-info-circle"></i> <span id="smallBannerText"></span> <span class="text-xs opacity-80">点击查看</span>
+</div>
+
+<!-- 首页 -->
+<div id="page-home" class="page active p-4">
+<div class="flex gap-3 my-4">
+<button onclick="showPage('page-neworder')" class="flex-1 bg-primary text-white py-3 rounded-lg">+新建订单</button>
+<button onclick="showPage('page-worker-stat')" class="flex-1 bg-success text-white py-3 rounded-lg">工资汇总</button>
+</div>
+<div class="flex flex-wrap gap-2 mb-3">
+<button onclick="setFilter('all')" id="filter-all" class="py-1.5 rounded text-sm bg-primary text-white">全部</button>
+<button onclick="setFilter('running')" id="filter-running" class="py-1.5 rounded text-sm bg-gray-200">进行中</button>
+<button onclick="setFilter('warn')" id="filter-warn" class="py-1.5 rounded text-sm bg-gray-200">⚠️超时</button>
+<button onclick="setFilter('small')" id="filter-small" class="py-1.5 rounded text-sm bg-gray-200">🟡小单</button>
+<button onclick="setFilter('finished')" id="filter-finished" class="py-1.5 rounded text-sm bg-gray-200">已完工</button>
+</div>
+<h3 class="font-bold mb-2">📋订单列表</h3>
+<div id="orderList"></div>
+</div>
+
+<!-- 新建订单 -->
+<div id="page-neworder" class="page p-4">
+<div class="bg-white rounded-xl p-4 card-shadow">
+<h3 class="font-bold mb-3">新建订单</h3>
+<div class="mb-3">
+<label class="text-sm text-gray-600">订单编号</label>
+<input type="text" id="orderSn" class="w-full border rounded-lg px-3 py-2 mt-1" placeholder="123456">
+</div>
+<div class="mb-3">
+<label class="text-sm text-gray-600">订单备注</label>
+<input type="text" id="orderName" class="w-full border rounded-lg px-3 py-2 mt-1">
+</div>
+<div class="mb-3">
+<label class="text-sm text-gray-600">目标总资产（万）</label>
+<input type="number" id="orderTarget" class="w-full border rounded-lg px-3 py-2 mt-1" placeholder="1亿填10000">
+<div class="text-xs text-warn mt-1">＜2000万标记小单</div>
+</div>
+<div class="mb-3">
+<label class="text-sm text-gray-600">指派员工</label>
+<select id="orderWorkerSel" class="w-full border rounded-lg px-3 py-2"></select>
+</div>
+<div class="mb-3">
+<label class="text-sm text-gray-600">备注</label>
+<textarea id="orderRemark" class="w-full border rounded-lg px-3 py-2 mt-1" rows="2"></textarea>
+</div>
+<button onclick="createOrder()" class="w-full bg-success text-white py-2.5 rounded-lg">创建订单</button>
+<button onclick="showPage('page-home')" class="w-full mt-2 border py-2 rounded-lg">返回</button>
+</div>
+</div>
+
+<!-- 订单详情 -->
+<div id="page-orderdetail" class="page p-4">
+<input type="hidden" id="curOrderId">
+<div class="bg-white rounded-xl p-4 card-shadow mb-4">
+<div class="flex justify-between items-center">
+<h3 class="font-bold text-lg" id="detailTitle"></h3>
+<span id="orderStatusTag" class="text-sm px-2 py-1 rounded"></span>
+</div>
+<div class="mt-2 space-y-1 text-sm">
+<p>编号：<span id="detailSn"></span></p>
+<p>员工：<span id="detailWorker"></span></p>
+<p>目标：<span id="detailTarget"></span> 万</p>
+<p>已完成：<span id="detailDone"></span> 万</p>
+<p>剩余：<span class="text-warn font-bold" id="detailLeft"></span> 万</p>
+<p>预估薪资：<span id="detailTotalPay"></span> 元</p>
+<p>最后更新：<span id="detailLastUpdate"></span></p>
+</div>
+<div class="flex gap-2 mt-3">
+<button id="btnToggleFinish" onclick="toggleOrderFinish()" class="flex-1 py-1.5 rounded text-sm"></button>
+</div>
+<div class="my-3 border-t pt-3">
+<h4 class="font-medium mb-2">录入进度</h4>
+<div class="mb-2">
+<label class="text-xs">本次完成（万）</label>
+<input type="number" id="recordFinish" class="w-full border rounded-lg px-3 py-2">
+</div>
+<button onclick="addRecord()" class="w-full bg-primary text-white py-2 mt-1 rounded-lg">提交进度</button>
+</div>
+</div>
+<div class="bg-white rounded-xl p-4 card-shadow">
+<h4 class="font-bold mb-2">📜进度明细</h4>
+<div id="recordLog" class="text-sm space-y-2 max-h-64 overflow-y-auto"></div>
+</div>
+<button onclick="showPage('page-home')" class="w-full mt-4 border py-2 rounded-lg">返回</button>
+</div>
+
+<!-- 员工管理 -->
+<div id="page-worker" class="page p-4">
+<div class="bg-white rounded-xl p-4 card-shadow mb-4">
+<h3 class="font-bold mb-3">新增员工</h3>
+<div class="mb-3">
+<label class="text-sm text-gray-600">员工名称</label>
+<input type="text" id="workerName" class="w-full border rounded-lg px-3 py-2 mt-1">
+</div>
+<button onclick="addWorker()" class="w-full bg-success text-white py-2.5 rounded-lg">添加</button>
+</div>
+<h3 class="font-bold mb-2">员工列表</h3>
+<div id="workerList"></div>
+<button onclick="showPage('page-home')" class="w-full mt-4 border py-2 rounded-lg">返回</button>
+</div>
+
+<!-- 工资汇总 -->
+<div id="page-worker-stat" class="page p-4">
+<div class="bg-white rounded-xl p-4 card-shadow mb-4">
+<h3 class="font-bold mb-2">📊员工薪资汇总</h3>
+<div id="statList" class="text-sm space-y-2 max-h-96 overflow-y-auto"></div>
+</div>
+<button onclick="showPage('page-home')" class="w-full border py-2 rounded-lg">返回</button>
+</div>
+
+<!-- 底部导航 -->
+<nav class="fixed bottom-0 left-0 right-0 bg-white border-t flex">
+<button onclick="showPage('page-home')" class="flex-1 py-3 text-center text-sm"><i class="fa fa-home"></i><br>首页</button>
+<button onclick="showPage('page-worker')" class="flex-1 py-3 text-center text-sm"><i class="fa fa-users"></i><br>员工</button>
+<button onclick="exportData()" class="flex-1 py-3 text-center text-sm"><i class="fa fa-download"></i><br>导出</button>
+<button onclick="importData()" class="flex-1 py-3 text-center text-sm"><i class="fa fa-upload"></i><br>导入</button>
+</nav>
+</div>
+<input type="file" id="importFile" accept=".json" class="hidden" onchange="readImportFile(event)">
+
+<script>
+// ======================【在这里填写你的Supabase信息！！】======================
+const SUPABASE_URL = "https://xxxx.supabase.co";
+const SUPABASE_ANON_KEY = "你的anon密钥";
+// ==========================================================================
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let realtimeChannel = null;
+let orderFilter = 'all';
+let workers = [];
+let orders = [];
+let config = {weekTarget:10000,monthTarget:40000,baseA:29,addA:2.9,baseB:27,addB:2.7,bonusThreshold:2000,bonusMoney:30,timeoutHour:12};
+
+// 实时监听
+function subscribeRealtime(){
+  realtimeChannel = supabase.channel('delta-order-realtime')
+  .on('postgres_changes',{event:'*',schema:'public',table:'workers'},()=>fetchAll())
+  .on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>fetchAll())
+  .on('postgres_changes',{event:'*',schema:'public',table:'records'},()=>fetchAll())
+  .on('postgres_changes',{event:'*',schema:'public',table:'cfg'},()=>fetchCfg())
+  .subscribe((status)=>{
+    if(status==='SUBSCRIBED') document.getElementById('syncTip').classList.remove('hidden');
+  })
+}
+async function fetchAll(){
+  const {data:w}=await supabase.from('workers').select('*');
+  const {data:o}=await supabase.from('orders').select('*');
+  const {data:r}=await supabase.from('records').select('*');
+  workers = w || [];
+  orders = o.map(ord=>{
+    ord.records = r.filter(x=>x.order_id === ord.id);
+    calcOrderTotal(ord);
+    return ord;
+  })
+  renderOrderList();renderWorkerList();renderWorkerStat();refreshWarnBanner();
+}
+async function fetchCfg(){
+  const {data}=await supabase.from('cfg').select('*').limit(1);
+  if(data?.length) config = data[0];
+}
+async function saveCfg(){
+  await supabase.from('cfg').upsert([config]);
+}
+async function insertWorker(name){
+  await supabase.from('workers').insert([{name}]);
+  await fetchAll();
+}
+async function delWorkerDb(id){
+  await supabase.from('workers').delete().eq('id',id);
+  await fetchAll();
+}
+async function insertOrder(o){
+  await supabase.from('orders').insert([o]);
+  await fetchAll();
+}
+async function updateOrder(o){
+  await supabase.from('orders').update(o).eq('id',o.id);
+  await fetchAll();
+}
+async function insertRecord(r){
+  await supabase.from('records').insert([r]);
+  await fetchAll();
+}
+function uuid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+function getWeekStart(d){const date=new Date(d);const day=date.getDay()||7;date.setDate(date.getDate()-day+1);date.setHours(0,0,0,0);return date}
+function getWeekStartStr(d){return getWeekStart(d).toISOString().split('T')[0]}
+function getWeekEnd(d){const s=getWeekStart(d);const e=new Date(s);e.setDate(e.getDate()+7);return e}
+function getMonthStr(d){const dt=new Date(d);let m=String(dt.getMonth()+1).padStart(2,'0');return `${dt.getFullYear()}-${m}`}
+
+function openPeriodModal(){document.getElementById('periodModal').classList.add('active');const now=new Date();document.getElementById('weekStartDate').value=getWeekStartStr(now);document.getElementById('selMonth').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`}
+function closePeriodModal(){document.getElementById('periodModal').classList.remove('active')}
+function switchPeriodType(){const w=document.querySelector('input[name="periodType"][value="week"]').checked;document.getElementById('weekSelectArea').classList.toggle('hidden',!w);document.getElementById('monthSelectArea').classList.toggle('hidden',w)}
+function openSalarySetting(){
+  document.getElementById('cfgWeekTarget').value=config.weekTarget;
+  document.getElementById('cfgMonthTarget').value=config.monthTarget;
+  document.getElementById('cfgBaseA').value=config.baseA;
+  document.getElementById('cfgAddA').value=config.addA;
+  document.getElementById('cfgBaseB').value=config.baseB;
+  document.getElementById('cfgAddB').value=config.addB;
+  document.getElementById('cfgBonusThreshold').value=config.bonusThreshold;
+  document.getElementById('cfgBonusMoney').value=config.bonusMoney;
+  document.getElementById('cfgTimeoutHour').value=config.timeoutHour;
+  document.getElementById('salaryModal').classList.add('active');
+}
+function closeSalarySetting(){document.getElementById('salaryModal').classList.remove('active')}
+async function saveSalarySetting(){
+  config={
+    weekTarget:+document.getElementById('cfgWeekTarget').value,
+    monthTarget:+document.getElementById('cfgMonthTarget').value,
+    baseA:+document.getElementById('cfgBaseA').value,
+    addA:+document.getElementById('cfgAddA').value,
+    baseB:+document.getElementById('cfgBaseB').value,
+    addB:+document.getElementById('cfgAddB').value,
+    bonusThreshold:+document.getElementById('cfgBonusThreshold').value,
+    bonusMoney:+document.getElementById('cfgBonusMoney').value,
+    timeoutHour:+document.getElementById('cfgTimeoutHour').value
+  };
+  await saveCfg();closeSalarySetting();alert("保存成功");
+}
+async function recalcByPeriod(){
+  const wType=document.querySelector('input[name="periodType"][value="week"]').checked;
+  let target,filterFn;
+  if(wType){
+    const s=new Date(document.getElementById('weekStartDate').value);
+    const e=getWeekEnd(s);
+    target=config.weekTarget;
+    filterFn=r=>{const t=new Date(r.time);return t>=s&&t<e}
+  }else{
+    const m=document.getElementById('selMonth').value;
+    target=config.monthTarget;
+    filterFn=r=>getMonthStr(r.time)===m
+  }
+  let sum={};workers.forEach(x=>sum[x.id]=0);
+  orders.forEach(o=>o.records.forEach(r=>{if(filterFn(r))sum[r.workerId]=(sum[r.workerId]||0)+r.finish}));
+  for(let o of orders){
+    let changed=false;
+    for(let r of o.records){
+      if(!filterFn(r))continue;
+      const total=sum[r.workerId]||0;
+      const useA=total>=target;
+      const asset=r.finish;
+      if(asset<=1000)r.basePay=(asset/1000)*(useA?config.baseA:config.baseB);
+      else{const over=asset-1000;r.basePay=(useA?config.baseA:config.baseB)+(over/100)*(useA?config.addA:config.addB)}
+      r.bonusPay=(!useA&&asset>=config.bonusThreshold)?config.bonusMoney:0;
+      await supabase.from('records').update({basePay:r.basePay,bonusPay:r.bonusPay}).eq('id',r.id);
+      changed=true;
+    }
+    if(changed) calcOrderTotal(o);
+  }
+  closePeriodModal();alert("✅重算完成");
+}
+function calcOrderTotal(o){
+  let done=0;o.records.forEach(r=>done+=r.finish);
+  o.done=done;o.left=o.target-done;
+}
+function isOrderWarn(o){
+  if(o.finished)return false;if(!o.lastUpdateTime)return true;
+  const diff=(Date.now()-new Date(o.lastUpdateTime).getTime())/1000/60/60;
+  return diff>=config.timeoutHour;
+}
+function isSmallOrder(o){return o.target<2000}
+function refreshWarnBanner(){
+  const warn=orders.filter(o=>!o.finished&&isOrderWarn(o)).length;
+  const small=orders.filter(o=>isSmallOrder(o)).length;
+  const bw=document.getElementById('warnBanner');const bt=document.getElementById('warnBannerText');
+  bw.classList.toggle('hidden',warn===0);bt.innerText=`${warn}个订单超时未更新`;
+  const bs=document.getElementById('smallOrderBanner');const bst=document.getElementById('smallBannerText');
+  bs.classList.toggle('hidden',small===0);bst.innerText=`${small}个小单(<2000万)`;
+}
+function setFilter(type){
+  orderFilter=type;
+  document.querySelectorAll('[id^="filter-"]').forEach(el=>el.className='py-1.5 rounded text-sm bg-gray-200');
+  document.getElementById('filter-'+type).className='py-1.5 rounded text-sm bg-primary text-white';
+  renderOrderList();
+}
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if(id==='page-home'){refreshWarnBanner();renderOrderList()}
+  if(id==='page-worker')renderWorkerList();
+  if(id==='page-worker-stat')renderWorkerStat();
+  if(id==='page-neworder')refreshWorkerSelect('orderWorkerSel');
+}
+async function addWorker(){
+  const n=document.getElementById('workerName').value.trim();if(!n)return alert("名字不能为空");
+  await insertWorker(n);
+  document.getElementById('workerName').value='';
+}
+async function delWorker(id){if(!confirm('删除？'))return;await delWorkerDb(id)}
+function renderWorkerList(){
+  let html='';workers.forEach(w=>html+=`<div class="flex justify-between items-center border-b py-2"><span>${w.name}</span><button onclick="delWorker('${w.id}')" class="text-red-500 text-sm">删除</button></div>`);
+  document.getElementById('workerList').innerHTML=html||'<div class="text-gray-400 text-center py-4">暂无员工</div>';
+}
+function refreshWorkerSelect(selId){
+  const sel=document.getElementById(selId);sel.innerHTML='';
+  workers.forEach(w=>sel.innerHTML+=`<option value="${w.id}">${w.name}</option>`);
+}
+function renderWorkerStat(){
+  let stat={};workers.forEach(w=>stat[w.id]={name:w.name,asset:0,base:0,bonus:0});
+  orders.forEach(o=>o.records.forEach(r=>{
+    if(stat[r.workerId]){stat[r.workerId].asset+=r.finish;stat[r.workerId].base+=r.basePay||0;stat[r.workerId].bonus+=r.bonusPay||0}
+  }))
+  const list=Object.values(stat).sort((a,b)=>(b.base+b.bonus)-(a.base+a.bonus));
+  let html='';list.forEach(i=>{const t=i.base+i.bonus;html+=`<div class="border-b py-2"><div class="font-medium">👤${i.name}</div><div class="text-xs text-gray-600">完成：${i.asset.toFixed(2)}万｜基础：${i.base.toFixed(2)}｜奖励：${i.bonus.toFixed(2)}｜合计：<span class="text-success font-bold">${t.toFixed(2)}</span></div></div>`})
+  document.getElementById('statList').innerHTML=html||'<div class="text-gray-400 text-center py-4">无记录</div>';
+}
+async function createOrder(){
+  const sn=document.getElementById('orderSn').value.trim();
+  const name=document.getElementById('orderName').value.trim();
+  const target=+document.getElementById('orderTarget').value;
+  const wid=document.getElementById('orderWorkerSel').value;
+  const remark=document.getElementById('orderRemark').value.trim();
+  if(!sn||!target)return alert("编号和目标必填");
+  if(orders.find(o=>o.sn===sn))return alert("编号重复");
+  const newOrder={id:uuid(),sn,name,target,done:0,left:target,workerId:wid,remark,finished:false,createTime:new Date().toISOString(),lastUpdateTime:null}
+  await insertOrder(newOrder);
+  alert("创建成功");showPage('page-home');
+}
+function renderOrderList(){
+  let filtered=orders.filter(o=>{
+    if(orderFilter==='running')return !o.finished;
+    if(orderFilter==='warn')return !o.finished&&isOrderWarn(o);
+    if(orderFilter==='small')return isSmallOrder(o);
+    if(orderFilter==='finished')return o.finished;
+    return true;
+  })
+  let html='';filtered.forEach(o=>{
+    const w=workers.find(x=>x.id===o.workerId);
+    const wn=w?w.name:'-';
+    const status=o.finished?"✅已完工":isOrderWarn(o)?"⚠️超时":"🔄进行中";
+    const cls=o.finished?'text-closed':isOrderWarn(o)?'text-danger':'text-primary';
+    const c=isOrderWarn(o)&&!o.finished?'warn-card':'';
+    const s=isSmallOrder(o)?'<span class="text-warn font-bold">【小单】</span>':'';
+    html+=`<div onclick="openOrderDetail('${o.id}')" class="bg-white rounded-lg p-3 mb-2 card-shadow ${c}"><div class="flex justify-between"><b>${s}订单${o.sn} ${o.name}</b><span class="text-xs ${cls}">${status}</span></div><p class="text-sm mt-1">👤${wn}｜目标:${o.target}万｜已完成:${o.done}万｜剩余:<span class="text-warn">${o.left}</span>万</p></div>`
+  })
+  document.getElementById('orderList').innerHTML=html||'<div class="text-center py-4 text-gray-400">暂无订单</div>';
+}
+function openOrderDetail(id){
+  const o=orders.find(x=>x.id===id);if(!o)return;
+  document.getElementById('curOrderId').value=id;
+  const w=workers.find(x=>x.id===o.workerId);
+  document.getElementById('detailTitle').innerText=`订单 ${o.sn}`;
+  document.getElementById('detailSn').innerText=o.sn;
+  document.getElementById('detailWorker').innerText=w?w.name:'-';
+  document.getElementById('detailTarget').innerText=o.target;
+  document.getElementById('detailDone').innerText=o.done;
+  document.getElementById('detailLeft').innerText=o.left;
+  document.getElementById('detailLastUpdate').innerText=o.lastUpdateTime?new Date(o.lastUpdateTime).toLocaleString():'无';
+  document.getElementById('btnToggleFinish').innerText=o.finished?"重新打开":"标记完工";
+  let total=0;o.records.forEach(r=>total+=(r.basePay||0)+(r.bonusPay||0));
+  document.getElementById('detailTotalPay').innerText=total.toFixed(2);
+  let log='';o.records.slice().reverse().forEach(r=>log+=`<div class="border-b py-1"><div>${new Date(r.time).toLocaleString()}｜完成${r.finish}万</div><div class="text-xs">基础${(r.basePay||0).toFixed(2)} 奖励${(r.bonusPay||0).toFixed(2)}</div></div>`);
+  document.getElementById('recordLog').innerHTML=log||'<div class="text-gray-400">暂无进度</div>';
+  showPage('page-orderdetail');
+}
+async function toggleOrderFinish(){
+  const id=document.getElementById('curOrderId').value;
+  const o=orders.find(x=>x.id===id);o.finished=!o.finished;
+  await updateOrder(o);
+}
+async function addRecord(){
+  const id=document.getElementById('curOrderId').value;
+  const o=orders.find(x=>x.id===id);
+  const f=+document.getElementById('recordFinish').value;if(!f||f<=0)return alert("填写本次完成");
+  const rec={id:uuid(),order_id:o.id,workerId:o.workerId,finish:f,time:new Date().toISOString(),basePay:0,bonusPay:0};
+  o.lastUpdateTime=new Date().toISOString();
+  await insertRecord(rec);
+  await updateOrder(o);
+  document.getElementById('recordFinish').value='';
+}
+function exportData(){
+  const blob=new Blob([JSON.stringify({workers,orders,config},null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='订单备份.json';a.click();
+}
+async function importData(){document.getElementById('importFile').click()}
+async function readImportFile(e){
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();r.onload=async ev=>{
+    try{
+      const d=JSON.parse(ev.target.result);
+      await supabase.from('workers').delete().neq('id','0');
+      await supabase.from('orders').delete().neq('id','0');
+      await supabase.from('records').delete().neq('id','0');
+      for(let w of d.workers) await supabase.from('workers').insert([w]);
+      for(let o of d.orders) await supabase.from('orders').insert([{id:o.id,sn:o.sn,name:o.name,target:o.target,workerId:o.workerId,remark:o.remark,finished:o.finished,createTime:o.createTime,lastUpdateTime:o.lastUpdateTime}]);
+      for(let r of d.orders.flatMap(x=>x.records)) await supabase.from('records').insert([r]);
+      config=d.config;await saveCfg();
+      alert("导入成功");await fetchAll();
+    }catch(err){alert("文件错误")}
+  }
+  r.readAsText(f);
+}
+// 初始化
+(async ()=>{
+  await fetchCfg();
+  await fetchAll();
+  subscribeRealtime();
+  showPage('page-home');
+})()
+</script>
+</body>
+</html>
